@@ -4,33 +4,151 @@ Replay Labs is a local-first learning layer for AI-assisted technical work.
 
 AI coding agents can help people produce software faster, but speed alone does not guarantee understanding. Replay Labs turns local coding-agent sessions into guided mission labs that explain the decisions behind the work, the tradeoffs, the risks, and what the human should understand before calling the session complete.
 
-## Local-First Beta
+## Install
 
-Replay Labs starts as an npm-only local app:
+Replay Labs is distributed through npm.
+
+Run it without installing:
 
 ```bash
 npx replay-labs
-# opens http://127.0.0.1:<port>/inbox
 ```
 
-The served app opens a Session Inbox that discovers local Claude and Codex
-sessions on this machine. The user chooses a session, or lets Replay choose a
-ready one. No upload or paste is required.
+Or install it globally:
 
-For local development from this repo:
+```bash
+npm install -g replay-labs
+replay-labs
+```
+
+Replay Labs also ships a short command alias after global install:
+
+```bash
+npm install -g replay-labs
+replay
+```
+
+Requirements:
+
+- Node.js 20 or newer
+- Local Claude Code or Codex sessions if you want Replay Labs to discover past AI work automatically
+
+## First Run
+
+Start the local app:
+
+```bash
+npx replay-labs
+```
+
+Replay Labs starts a local web server and opens:
+
+```text
+http://127.0.0.1:<port>/inbox
+```
+
+From the Session Inbox you can:
+
+1. Review local AI sessions discovered on your machine.
+2. Choose a specific session.
+3. Let Replay Labs choose a strong candidate.
+4. Generate or open a mission lab.
+5. Work through the lab to understand the decision, risk, repair, and transfer pattern.
+
+No upload or paste is required.
+
+## What Users Get
+
+Replay Labs looks at real local AI work and turns it into a guided lab. A useful lab helps you answer:
+
+- What was the actual problem?
+- What decision did the AI make?
+- What evidence supports that decision?
+- What could break if the decision is wrong?
+- What should I understand before I ship or continue this work?
+- Can I apply the same pattern in a new situation?
+
+Replay Labs separates sessions into three states:
+
+- **Ready lab**: concrete changed-code evidence exists and a practice lab can open.
+- **Can try generation**: concrete diff evidence exists, but no generated lab exists yet.
+- **Needs real diff**: Replay Labs found decision signals, but not enough code evidence to build a trustworthy lab.
+
+## Privacy And Local Data
+
+Replay Labs is local-first.
+
+- Sessions are discovered from local Claude and Codex data on your computer.
+- Generated labs are written to local app data.
+- You do not need to upload or paste sessions into a website.
+- Set `REPLAY_HOME=/path/to/replay-data` to choose a custom data location.
+
+Example:
+
+```bash
+REPLAY_HOME=~/replay-labs-data npx replay-labs
+```
+
+## Common Commands
+
+Start the app without opening a browser:
+
+```bash
+npx replay-labs --no-open
+```
+
+Use a specific port:
+
+```bash
+npx replay-labs --port 4192
+```
+
+Show help:
+
+```bash
+npx replay-labs --help
+```
+
+## Troubleshooting
+
+If no sessions appear:
+
+- Confirm you have used Claude Code or Codex locally on this machine.
+- Click refresh in the Session Inbox.
+- Check whether your agent stores sessions in a custom location.
+
+If a session says **needs real diff**, Replay Labs found useful conversation signals but not enough concrete code-change evidence to create a trustworthy lab.
+
+If the browser does not open automatically, copy the local URL printed in the terminal.
+
+## Development
+
+Clone the repo, install dependencies, and run tests:
+
+```bash
+npm install
+npm test
+```
+
+Run the app from source:
 
 ```bash
 node ./src/cli.js --no-open
 ```
 
-Replay Labs writes generated labs to the local app data directory by default. Set
-`REPLAY_HOME=/path/to/replay-data` to choose a different location.
+Generate the bundled example report:
 
-Replay Labs separates three states:
+```bash
+npm run replay:example
+```
 
-- **ready lab**: concrete changed-code evidence exists and a practice lab can open
-- **can try generation**: concrete diff evidence exists, but no hand-authored lab exists yet
-- **needs real diff**: Replay Labs found decision signals, but not enough code evidence to build a trustworthy lab
+Generate the bundled example interactive lab:
+
+```bash
+npm run replay:example:html
+```
+
+## Fixture Commands
 
 The older CLI path is still useful for fixtures and development:
 
@@ -114,20 +232,6 @@ See:
 - [Production And Open Source Plan](./docs/production-open-source-plan.md)
 - [Release Process](./docs/release-process.md)
 - [Adjacent Research](./docs/adjacent-research.md)
-
-## Development
-
-Run tests:
-
-```bash
-npm test
-```
-
-Generate the example report:
-
-```bash
-npm run replay:example
-```
 
 ## Near-Term Direction
 
