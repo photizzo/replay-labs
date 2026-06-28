@@ -1,0 +1,14 @@
+.github/
+.replay-data/
+replay-built/
+replay-inbox/
+reports/
+reports-*/
+qa-shots/
+qa-scan-current/
+test/
+docs/
+.env
+.env.*
+*.tgz
+

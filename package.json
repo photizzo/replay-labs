@@ -3,6 +3,26 @@
   "version": "0.1.0",
   "description": "Local-first learning labs for AI-assisted technical work.",
   "type": "module",
+  "homepage": "https://github.com/photizzo/replay-labs#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/photizzo/replay-labs.git"
+  },
+  "bugs": {
+    "url": "https://github.com/photizzo/replay-labs/issues"
+  },
+  "keywords": [
+    "ai",
+    "learning",
+    "developer-tools",
+    "claude",
+    "codex",
+    "local-first"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "files": [
     "src",
     "scripts",

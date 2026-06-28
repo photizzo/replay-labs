@@ -112,6 +112,7 @@ See:
 - [Product Problem Memo](./docs/product-problem-memo.md)
 - [MVP Execution Plan](./docs/mvp-execution-plan.md)
 - [Production And Open Source Plan](./docs/production-open-source-plan.md)
+- [Release Process](./docs/release-process.md)
 - [Adjacent Research](./docs/adjacent-research.md)
 
 ## Development
