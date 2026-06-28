@@ -19,10 +19,13 @@ export function generateOverviewHtml({ goal, labs }) {
     : hasDecisionSignals
       ? "Replay Labs found decision signals, but it did not find enough concrete code evidence to build a practice lab."
       : "This session may still be useful to read, but Replay cannot honestly turn it into a decision map or lab yet.";
+  const catalogLinks = rich
+    .map((l) => l.module.patternHref ? `<a href="${escapeHtml(l.module.patternHref)}">${escapeHtml(l.module.name)}</a>` : "")
+    .filter(Boolean);
   const foot = hasReadyLabs
-    ? `Ready labs use this session's diff and transcript. Pattern catalog: ${
-        rich.map((l) => `<a href="patterns/${l.module.id}.html">${escapeHtml(l.module.name)}</a>`).join(" · ")
-      }`
+    ? catalogLinks.length
+      ? `Ready labs use this session's diff and transcript. Pattern catalog: ${catalogLinks.join(" · ")}`
+      : "Ready labs use this session's diff and transcript. This session did not need a prebuilt catalog pattern."
     : hasDecisionSignals
       ? "No lab link is shown because this session only had weak or indirect evidence."
       : "No decision map is shown because Replay did not find enough decision evidence.";

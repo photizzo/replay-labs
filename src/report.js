@@ -1,4 +1,19 @@
 const MAX_SNIPPET_LINES = 8;
+const DECISION_PRIORITY = {
+  "next-client-boundary": 100,
+  "api-secret-boundary": 100,
+  "cli-contract": 90,
+  "token-lifecycle": 85,
+  "api-boundary-validation": 82,
+  "prompt-protocol": 80,
+  "demo-persistence": 78,
+  "product-loop-first": 72,
+  "dependency-choice": 70,
+  "schema-first-reporting": 68,
+  "fixture-driven-product-learning": 55,
+  "test-regression-net": 35,
+  "error-handling": 30
+};
 
 const DECISION_RULES = [
   {
@@ -355,7 +370,9 @@ function extractDecisions({ diff, transcript }) {
   );
 
   if (decisions.length > 0) {
-    return decisions.slice(0, 5);
+    return decisions
+      .sort((a, b) => (DECISION_PRIORITY[b.id] || 50) - (DECISION_PRIORITY[a.id] || 50))
+      .slice(0, 5);
   }
 
   return [

@@ -153,6 +153,56 @@ test("served inbox can build a lab from a discovered local session", async () =>
   }
 });
 
+test("concrete non-seed sessions produce a session-specific lab", async () => {
+  const home = await mkdtemp(join(tmpdir(), "replay-generic-home-"));
+  const root = await mkdtemp(join(tmpdir(), "replay-generic-root-"));
+  const claudeDir = join(home, ".claude", "projects", "-Users-test-Projects-cli-tool");
+  await mkdir(claudeDir, { recursive: true });
+
+  const sessionPath = join(claudeDir, "cli-contract.jsonl");
+  await writeFile(sessionPath, [
+    JSON.stringify({ type: "user", message: { content: "Make this CLI safer to run by requiring an output flag and useful usage text." } }),
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "I will treat the CLI flags as the user-facing contract." }] } }),
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Edit", input: { file_path: "/Users/test/Projects/cli-tool/src/cli.js", old_string: "const out = process.argv[2];\nrun(out);", new_string: "const args = parseArgs(process.argv.slice(2));\nif (!args.out) {\n  console.error('Usage: cli-tool --out <file>');\n  process.exit(1);\n}\nrun(args.out);" } }] } })
+  ].join("\n"), "utf8");
+
+  const sessions = await discoverSessions({ homeDir: home, limit: 10 });
+  const session = sessions.find((s) => s.path === sessionPath);
+  assert.ok(session);
+  assert.equal(session.hasConcreteEvidence, true);
+  assert.equal(session.richLabs > 0, true);
+  assert.equal(session.decisions.some((d) => d.id === "cli-contract"), true);
+
+  const server = startServer({ root, port: 0, homeDir: home });
+  await once(server, "listening");
+  const port = server.address().port;
+
+  try {
+    const build = await fetch(`http://127.0.0.1:${port}/api/build-lab`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionPath })
+    });
+    assert.equal(build.status, 200);
+    const payload = await build.json();
+    assert.equal(payload.richLabs > 0, true);
+    assert.match(payload.primaryLabHref, /labs\/decision-cli-contract\.html/);
+    assert.doesNotMatch(payload.primaryLabHref, /secret-boundary|runtime-boundary/);
+
+    const lab = await fetch(`http://127.0.0.1:${port}${payload.primaryLabHref}`);
+    assert.equal(lab.status, 200);
+    const html = await lab.text();
+    assert.match(html, /Design the CLI as a stable product contract/);
+    assert.doesNotMatch(html, /Secret Boundary/);
+
+    const map = await fetch(`http://127.0.0.1:${port}${payload.href}`);
+    assert.equal(map.status, 200);
+    assert.match(await map.text(), /did not need a prebuilt catalog pattern/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("inbox keeps Codex sessions visible when Claude sessions dominate", async () => {
   const home = await mkdtemp(join(tmpdir(), "replay-balanced-home-"));
   const claudeDir = join(home, ".claude", "projects", "-Users-test-Projects-many-claude");

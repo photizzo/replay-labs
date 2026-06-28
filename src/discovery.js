@@ -100,7 +100,6 @@ async function inspectSessionFile(file, tool, homeDir) {
   });
   const hasConcreteEvidence = hasUsableDiffEvidence(ingested.diff);
   const richLabs = analysis.decisions.filter((decision) =>
-    MODULES[decision.id] &&
     hasUsableDiffEvidence(findEvidenceSnippet(ingested.diff, decision.patterns))
   ).length;
   const score = scoreSession({ ingested, analysis, size: info.size, tool, richLabs, hasConcreteEvidence });
@@ -263,7 +262,16 @@ function scoreSession({ ingested, analysis, size, tool, richLabs, hasConcreteEvi
     reasons.push("has file references, but no concrete diff");
   }
   if (analysis.decisions.length >= 1) { score += 3; reasons.push("contains detectable decisions"); }
-  if (richLabs > 0) { score += 5; reasons.push(`${richLabs} lab${richLabs === 1 ? " is" : "s are"} already available`); }
+  if (richLabs > 0) {
+    const seedLabs = analysis.decisions.filter((decision) =>
+      MODULES[decision.id] &&
+      hasUsableDiffEvidence(findEvidenceSnippet(ingested.diff, decision.patterns))
+    ).length;
+    score += 5;
+    reasons.push(seedLabs
+      ? `${richLabs} evidence-backed lab${richLabs === 1 ? " is" : "s are"} available (${seedLabs} seed pattern${seedLabs === 1 ? "" : "s"})`
+      : `${richLabs} evidence-backed lab${richLabs === 1 ? " is" : "s are"} available`);
+  }
   if (analysis.risks.length >= 2) { score += 1; reasons.push("has concrete risks to teach"); }
   if (/test|error|fail|fix|review|build|deploy|permission|validate|secret|api|design|prd|product/i.test(ingested.transcript)) {
     score += 1;

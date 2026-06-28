@@ -11,8 +11,9 @@ export function generateDecisionReplayHtml({ goal, diff, transcript, diffPath, t
   return generateLabHtml({ goal, module, evidence });
 }
 
-// One lab per session decision that has a rich module, plus the data the
-// session map needs to rank and link them.
+// One lab per session decision with concrete changed-line evidence, plus the
+// data the session map needs to rank and link them. Hand-authored modules are
+// polished exemplars; they are not the boundary of what Replay can teach.
 export async function generateSessionLabs({ goal, diff, transcript, diffPath, transcriptPath, generate = false, cacheDir = null, maxGenerated = 1 }) {
   const analysis = analyzeSession({ goal, diff, transcript, diffPath, transcriptPath });
   const labs = [];
@@ -27,12 +28,14 @@ export async function generateSessionLabs({ goal, diff, transcript, diffPath, tr
     const evidence = findEvidenceSnippet(analysis.diff, decision.patterns);
     const hasConcreteEvidence = hasUsableDiffEvidence(evidence);
     let module = buildModule(decision);
-    let rich = hasRichModule && hasConcreteEvidence;
+    let rich = hasConcreteEvidence;
     let generated = false;
 
-    // For decisions we have no hand-authored module for, generate one from the
-    // real evidence — this is how unseen patterns become real labs.
-    if (!hasRichModule && hasConcreteEvidence && loadOrGenerate && generatedCount < maxGenerated) {
+    // For decisions we have no hand-authored module for, try to generate a
+    // deeper module from the real evidence. If generation is unavailable or
+    // fails validation, the evidence-specific generic module still renders as a
+    // usable decision lab instead of forcing users back into the two seed labs.
+    if (!hasRichModule && rich && loadOrGenerate && generatedCount < maxGenerated) {
       const gen = await loadOrGenerate(cacheDir, decision, evidence);
       if (gen) { module = gen; rich = true; generated = true; generatedCount += 1; }
     }

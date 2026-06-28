@@ -566,8 +566,9 @@ export async function POST(request: Request) {
 }
 
 function buildGenericModule(decision) {
+  const id = slug(decision.id || decision.title || "decision");
   return {
-    id: "decision-ownership",
+    id: id ? `decision-${id}` : "decision-ownership",
     name: decision.title,
     why: decision.why,
     takeaway: decision.seniorCheck,
@@ -640,4 +641,12 @@ function buildGenericModule(decision) {
       ]
     }
   };
+}
+
+function slug(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 48);
 }
