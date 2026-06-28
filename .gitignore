@@ -1,0 +1,31 @@
+.DS_Store
+
+# Local app data and generated output
+.replay-data/
+replay-built/
+replay-inbox/
+reports/
+reports-*/
+qa-shots/
+qa-scan-current/
+
+# Local tool configuration
+.claude/
+
+# Node/package manager
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tgz
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Temporary files
+tmp/
+temp/
+*.tmp

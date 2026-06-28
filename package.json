@@ -1,0 +1,27 @@
+{
+  "name": "replay-labs",
+  "version": "0.1.0",
+  "description": "Local-first learning labs for AI-assisted technical work.",
+  "type": "module",
+  "files": [
+    "src",
+    "scripts",
+    "examples/password-reset.diff",
+    "examples/password-reset-transcript.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "bin": {
+    "replay-labs": "./src/cli.js",
+    "replay": "./src/cli.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "replay:example": "node ./src/cli.js learn --goal \"Add password reset flow\" --diff ./examples/password-reset.diff --transcript ./examples/password-reset-transcript.md --out ./reports/password-reset-understanding.md",
+    "replay:example:html": "node ./src/cli.js interact --goal \"Add password reset flow\" --diff ./examples/password-reset.diff --transcript ./examples/password-reset-transcript.md --out ./reports/password-reset-decision-replay.html"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
