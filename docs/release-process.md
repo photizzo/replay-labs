@@ -18,35 +18,65 @@ The publish workflow uses OIDC (`id-token: write`) and npm provenance. Do not ad
 
 ## First Publish
 
-If npm requires the package to exist before trusted publishing can be configured, do a one-time bootstrap publish from the npm account that will own the package, then immediately configure trusted publishing before subsequent releases.
+The first npm publish for `replay-labs@0.1.0` was completed with a temporary bootstrap token.
 
-Bootstrap command:
+After bootstrap:
 
-```bash
-npm publish --access public --provenance
-```
-
-Only use this once if npm does not allow trusted publishing setup before the package exists.
+- Delete or revoke the bootstrap npm token.
+- Keep future releases on Trusted Publishing only.
+- Do not restore the bootstrap workflow unless npm Trusted Publishing becomes unavailable.
 
 ## Normal Release
 
-1. Update `package.json` version.
-2. Run `npm test`.
-3. Run `npm pack --dry-run` and inspect the file list.
-4. Commit the version change.
-5. Create a GitHub release with tag `vX.Y.Z`.
-6. GitHub Actions runs `.github/workflows/publish.yml`.
-7. Verify:
+Releases are tag-driven. The tag is the publish trigger.
+
+1. Update the package version:
+
+```bash
+npm version patch
+```
+
+Use `minor` or `major` instead of `patch` when the release requires it.
+
+2. Push the release commit and tag:
+
+```bash
+git push origin main --follow-tags
+```
+
+3. GitHub Actions runs `.github/workflows/publish.yml` from the pushed `vX.Y.Z` tag.
+
+The workflow:
+
+- Verifies the tag matches `package.json`.
+- Runs `npm test`.
+- Runs `npm pack --dry-run`.
+- Publishes to npm through Trusted Publishing.
+- Creates the matching GitHub Release.
+
+4. Verify:
 
 ```bash
 npm view replay-labs version
 npx replay-labs --help
 ```
 
-## Rules
+## Manual Preflight
 
-- Do not publish from a local machine for normal releases.
-- Do not commit generated reports, screenshots, app data, or real transcripts.
-- Do not bypass GitHub push protection.
-- Do not publish if tests or npm dry-run fail.
+Before creating the version tag, it is still reasonable to run:
 
+```bash
+npm test
+npm pack --dry-run
+```
+
+This catches package mistakes before a tag starts the publish workflow.
+
+## Release Rules
+
+1. Do not publish from a local machine for normal releases.
+2. Run `npm test`.
+3. Run `npm pack --dry-run` and inspect the file list.
+4. Do not commit generated reports, screenshots, app data, or real transcripts.
+5. Do not bypass GitHub push protection.
+6. Do not publish if tests or npm dry-run fail.
