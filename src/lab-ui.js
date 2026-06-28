@@ -1241,6 +1241,15 @@ function runReview(stageId) {
 }
 
 function offlineHeuristic(stageId, submission) {
+  if (MODULE.id !== "runtime-boundary" && MODULE.id !== "secret-boundary") {
+    var rubric = MODULE.rubric && MODULE.rubric[stageId];
+    return { criteria: rubric && rubric.criteria ? rubric.criteria.map(function (c) {
+        return { id: c.id, pass: false, note: "No offline reviewer is available for this session-specific lab." };
+      }) : [],
+      overall: "FAIL",
+      summary: "No offline reviewer is available for this session-specific lab. Use the served app with the claude CLI available for a real review.",
+      misconception: null, reviewer: "unavailable" };
+  }
   if (MODULE.id === "secret-boundary") {
     var sChecks = stageId === "repair"
       ? [["Server route owns the call", /app\/api|route\.(ts|js)|NextResponse|export (async )?function (POST|GET)/.test(submission), true],

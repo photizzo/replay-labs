@@ -81,8 +81,8 @@ export const RUBRICS = {
 };
 
 export function getRubric(moduleId, stage) {
-  const mod = RUBRICS[moduleId] || RUBRICS["runtime-boundary"];
-  return mod[stage];
+  const mod = RUBRICS[moduleId];
+  return mod ? mod[stage] : null;
 }
 
 export function reviewPrompt(rubric, submission) {
@@ -152,7 +152,10 @@ const HEURISTICS = {
 
 export function heuristicReview(moduleId, stage, submission) {
   const rubric = getRubric(moduleId, stage);
-  const checks = (HEURISTICS[moduleId] || HEURISTICS["runtime-boundary"])[stage] || {};
+  if (!rubric || !HEURISTICS[moduleId]) {
+    return unavailableReview(rubric, moduleId, stage);
+  }
+  const checks = HEURISTICS[moduleId][stage] || {};
   const criteria = rubric.criteria.map((c) => {
     const pass = Boolean(checks[c.id] && checks[c.id](submission));
     return {
@@ -169,6 +172,18 @@ export function heuristicReview(moduleId, stage, submission) {
     summary: "Heuristic review only: pattern-matching, not understanding. Run with the claude CLI available for a real reviewer.",
     misconception: null,
     reviewer: "heuristic"
+  };
+}
+
+function unavailableReview(rubric, moduleId, stage) {
+  return {
+    criteria: rubric
+      ? rubric.criteria.map((c) => ({ id: c.id, pass: false, note: `Cannot judge "${c.name}" without a reviewer for ${moduleId}:${stage}.` }))
+      : [],
+    overall: "FAIL",
+    summary: `No offline reviewer is available for ${moduleId}:${stage}. Run with the claude CLI available for a real review.`,
+    misconception: null,
+    reviewer: "unavailable"
   };
 }
 
