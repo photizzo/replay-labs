@@ -32,8 +32,8 @@
     "LICENSE"
   ],
   "bin": {
-    "replay-labs": "./src/cli.js",
-    "replay": "./src/cli.js"
+    "replay-labs": "src/cli.js",
+    "replay": "src/cli.js"
   },
   "scripts": {
     "test": "node --test",
