@@ -115,7 +115,7 @@ const DECISION_RULES = [
   {
     id: "token-lifecycle",
     title: "Treat tokens as lifecycle-bound state",
-    patterns: [/token/i, /expires/i, /expiry/i, /reset/i],
+    patterns: [/token/i, /expires/i, /expiry/i, /password reset/i, /reset token/i, /invitation/i],
     why:
       "Password reset, invitation, and verification tokens are temporary authority. Their creation, expiry, and consumption rules define the security boundary.",
     beginnerMiss:

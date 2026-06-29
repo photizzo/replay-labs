@@ -68,11 +68,12 @@ Replay Labs looks at real local AI work and turns it into a guided lab. A useful
 - What should I understand before I ship or continue this work?
 - Can I apply the same pattern in a new situation?
 
-Replay Labs separates sessions into three states:
+Replay Labs separates sessions into four states:
 
 - **Ready lab**: concrete changed-code evidence exists and a practice lab can open.
-- **Can try generation**: concrete diff evidence exists, but no generated lab exists yet.
+- **Can try generation**: concrete diff evidence exists, but Replay Labs still needs to generate and validate a lab. If validation fails, Replay Labs shows a session map instead of serving a weak lab.
 - **Needs real diff**: Replay Labs found decision signals, but not enough code evidence to build a trustworthy lab.
+- **No decision evidence**: Replay Labs could not find enough decision evidence in the session.
 
 ## Privacy And Local Data
 
@@ -118,6 +119,8 @@ If no sessions appear:
 - Check whether your agent stores sessions in a custom location.
 
 If a session says **needs real diff**, Replay Labs found useful conversation signals but not enough concrete code-change evidence to create a trustworthy lab.
+
+If generation does not produce a ready lab, Replay Labs keeps the result local and opens a session map. It does not publish a generated lab unless the lab points back to concrete evidence.
 
 If the browser does not open automatically, copy the local URL printed in the terminal.
 
@@ -194,7 +197,7 @@ The interactive HTML output is the current product direction. It turns one stron
 - explicit pass conditions and terminal-style check output
 - wrong-answer feedback that names the misconception
 - a final mastery artifact with the mental model, failure signature, shipping standard, and transfer rule
-- a pattern catalog page per decision (`reports/patterns/runtime-boundary.html`) — intent, smell, naive/demo/production tiers, when not to use, checklist
+- a pattern catalog page when a ready seed lab has a matching catalog entry
 - saved progress in local storage
 
 ### Real review

@@ -32,7 +32,26 @@ jobs:
             exit 1
           fi
       - run: npm test
-      - run: npm pack --dry-run
+      - name: Packed package smoke
+        run: |
+          npm pack --pack-destination "$RUNNER_TEMP"
+          npm install -g "$RUNNER_TEMP"/replay-labs-*.tgz
+          replay-labs --help
+          replay --help
+          REPLAY_HOME="$RUNNER_TEMP/replay-home" replay-labs --no-open --port 0 > "$RUNNER_TEMP/replay.log" 2>&1 &
+          PID=$!
+          for i in {1..30}; do
+            URL="$(grep -o 'http://127.0.0.1:[0-9]*/' "$RUNNER_TEMP/replay.log" | head -1 || true)"
+            if [ -n "$URL" ] && curl -fsS "${URL}api/health"; then
+              kill "$PID"
+              wait "$PID" || true
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/replay.log"
+          kill "$PID" || true
+          exit 1
       - run: npm publish
       - name: Create GitHub release
         env:

@@ -13,7 +13,7 @@ export async function buildSessionBundle({
 }) {
   const { generateSessionLabs } = await import("./interaction.js");
   const { generateOverviewHtml } = await import("./overview.js");
-  const { PATTERNS, generatePatternHtml } = await import("./patterns.js");
+  const { generatePatternHtml } = await import("./patterns.js");
   const destination = resolve(outDir);
   const { labs } = await generateSessionLabs({
     goal,
@@ -31,9 +31,17 @@ export async function buildSessionBundle({
 
   const files = [];
   const expectedLabFiles = new Set(labs.filter((l) => l.rich).map((lab) => `${lab.module.id}.html`));
+  const expectedPatternFiles = new Set(labs
+    .filter((lab) => lab.rich && lab.module.patternHref)
+    .map((lab) => `${lab.module.id}.html`));
   for (const entry of await readdir(resolve(destination, "labs")).catch(() => [])) {
     if (entry.endsWith(".html") && !expectedLabFiles.has(entry)) {
       await rm(resolve(destination, "labs", entry), { force: true });
+    }
+  }
+  for (const entry of await readdir(resolve(destination, "patterns")).catch(() => [])) {
+    if (entry.endsWith(".html") && !expectedPatternFiles.has(entry)) {
+      await rm(resolve(destination, "patterns", entry), { force: true });
     }
   }
 
@@ -42,7 +50,7 @@ export async function buildSessionBundle({
     await writeFile(labPath, lab.html, "utf8");
     files.push(labPath);
   }
-  for (const slug of Object.keys(PATTERNS)) {
+  for (const slug of [...expectedPatternFiles].map((file) => file.replace(/\.html$/, ""))) {
     const patternPath = resolve(destination, "patterns", `${slug}.html`);
     await writeFile(patternPath, generatePatternHtml(slug), "utf8");
     files.push(patternPath);

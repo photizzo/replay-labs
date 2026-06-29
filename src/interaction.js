@@ -11,10 +11,11 @@ export function generateDecisionReplayHtml({ goal, diff, transcript, diffPath, t
   return generateLabHtml({ goal, module, evidence });
 }
 
-// One lab per session decision with concrete changed-line evidence, plus the
-// data the session map needs to rank and link them. Hand-authored modules are
-// polished exemplars; they are not the boundary of what Replay can teach.
-export async function generateSessionLabs({ goal, diff, transcript, diffPath, transcriptPath, generate = false, cacheDir = null, maxGenerated = 1 }) {
+// One item per session decision, plus the data the session map needs to rank and
+// link it. Concrete evidence alone is not a ready lab: it is either a full seed
+// module, a successfully generated module, or a decision scaffold waiting for
+// generation.
+export async function generateSessionLabs({ goal, diff, transcript, diffPath, transcriptPath, generate = false, cacheDir = null, maxGenerated = 1, generationTimeoutMs = 30000, generationAttempts = 1 }) {
   const analysis = analyzeSession({ goal, diff, transcript, diffPath, transcriptPath });
   const labs = [];
   let generatedCount = 0;
@@ -28,16 +29,26 @@ export async function generateSessionLabs({ goal, diff, transcript, diffPath, tr
     const evidence = findEvidenceSnippet(analysis.diff, decision.patterns);
     const hasConcreteEvidence = hasUsableDiffEvidence(evidence);
     let module = buildModule(decision);
-    let rich = hasConcreteEvidence;
+    let rich = hasRichModule && hasConcreteEvidence;
     let generated = false;
+    let kind = rich ? "catalog" : hasConcreteEvidence ? "scaffold" : "signals";
 
-    // For decisions we have no hand-authored module for, try to generate a
-    // deeper module from the real evidence. If generation is unavailable or
-    // fails validation, the evidence-specific generic module still renders as a
-    // usable decision lab instead of forcing users back into the two seed labs.
-    if (!hasRichModule && rich && loadOrGenerate && generatedCount < maxGenerated) {
-      const gen = await loadOrGenerate(cacheDir, decision, evidence);
-      if (gen) { module = gen; rich = true; generated = true; generatedCount += 1; }
+    // For decisions we have no hand-authored module for, try to generate a full
+    // module from the real changed-line evidence. If generation is unavailable
+    // or fails validation, keep it as a scaffold instead of pretending it is a
+    // ready practice lab.
+    if (!hasRichModule && hasConcreteEvidence && loadOrGenerate && generatedCount < maxGenerated) {
+      const gen = await loadOrGenerate(cacheDir, decision, evidence, {
+        timeoutMs: generationTimeoutMs,
+        attempts: generationAttempts
+      });
+      if (gen) {
+        module = gen;
+        rich = true;
+        generated = true;
+        kind = "generated";
+        generatedCount += 1;
+      }
     }
 
     labs.push({
@@ -45,15 +56,30 @@ export async function generateSessionLabs({ goal, diff, transcript, diffPath, tr
       module,
       rich,
       generated,
-      html: rich
-        ? generateLabHtml({
-            goal,
-            module,
-            evidence,
-            patternHref: generated ? null : `../patterns/${module.id}.html`,
-            homeHref: "../index.html"
-          })
-        : null
+      kind,
+      hasConcreteEvidence,
+      evidence,
+      html: null
+    });
+  }
+
+  const availableLabFiles = new Set(labs.filter((lab) => lab.rich).map((lab) => `${lab.module.id}.html`));
+  for (const lab of labs.filter((item) => item.rich)) {
+    const hasRichModule = Boolean(MODULES[lab.decision.id]);
+    const moduleForHtml = {
+      ...lab.module,
+      nextPatterns: (lab.module.nextPatterns || []).filter((pattern) =>
+        pattern.href && availableLabFiles.has(pattern.href)
+      )
+    };
+    lab.module = moduleForHtml;
+    lab.html = generateLabHtml({
+      goal,
+      module: moduleForHtml,
+      evidence: lab.evidence,
+      patternHref: hasRichModule ? `../patterns/${moduleForHtml.id}.html` : null,
+      homeHref: "../index.html",
+      sessionKey: hashForStorage([goal, diffPath, transcriptPath, lab.evidence, moduleForHtml.id].join("\n"))
     });
   }
   return { analysis, labs };
@@ -1106,12 +1132,19 @@ ReferenceError: window is not defined
 
 export function findEvidenceSnippet(diff, patterns = []) {
   const lines = diff.split("\n");
-  const index = lines.findIndex((line) => patterns.some((pattern) => pattern.test(line)));
+  const index = lines.findIndex((line) =>
+    isChangedEvidenceLine(line) && patterns.some((pattern) => pattern.test(line))
+  );
+  if (index < 0) return "";
   // Wider window so a decision's blast radius (directive + dependent lines, often
   // 30-50 lines apart) lands in one evidence snippet — enables multi-line diagnosis.
   const start = Math.max(0, index - 7);
-  const end = index >= 0 ? Math.min(lines.length, index + 56) : Math.min(lines.length, 40);
+  const end = Math.min(lines.length, index + 56);
   return lines.slice(start, end).join("\n");
+}
+
+function isChangedEvidenceLine(line) {
+  return /^[+-]/.test(line) && !/^(---|\+\+\+)/.test(line);
 }
 
 function highlightEvidence(value, patterns = []) {

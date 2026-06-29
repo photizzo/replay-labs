@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generateLearningReport } from "../src/report.js";
+import { analyzeSession, generateLearningReport } from "../src/report.js";
 import { generateDecisionReplayHtml } from "../src/interaction.js";
 
 test("generates a structured learning report from diff and transcript", () => {
@@ -33,6 +33,24 @@ Command: npm test`,
   assert.match(report, /Treat tokens as lifecycle-bound state/);
   assert.match(report, /Understanding Checklist/);
   assert.match(report, /Quiz/);
+});
+
+test("pandas reset_index does not trigger token lifecycle", () => {
+  const analysis = analyzeSession({
+    goal: "Explain a pandas stock article",
+    diff: `diff --git a/article.md b/article.md
+--- a/article.md
++++ b/article.md
+@@
++stock_df = stock_df.stack(level="Ticker")
++stock_df = stock_df.reset_index()
++stock_df = stock_df.sort_values(by=["Ticker", "Date"])`,
+    transcript: "The work reshaped yfinance output from wide to long.",
+    diffPath: "article.diff",
+    transcriptPath: "article.md"
+  });
+
+  assert.equal(analysis.decisions.some((decision) => decision.id === "token-lifecycle"), false);
 });
 
 test("generates an interactive practice lab from session evidence", () => {

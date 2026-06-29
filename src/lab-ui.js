@@ -2,10 +2,10 @@
 // Dark IDE-grade workspace, editorial typography, one accent, code chrome,
 // terminal moments with staggered reveals, and reuse notes worth keeping.
 
-export function generateLabHtml({ goal, module: baseModule, evidence, patternHref, homeHref }) {
+export function generateLabHtml({ goal, module: baseModule, evidence, patternHref, homeHref, sessionKey = "" }) {
   const module = patternHref ? { ...baseModule, patternHref } : baseModule;
   const evidenceHtml = renderDiff(evidence);
-  const storageKey = `replay-lab-v4:${hash(goal + module.name)}`;
+  const storageKey = `replay-lab-v5:${hash([goal, module.id, module.name, sessionKey, evidence].join("\n"))}`;
   const payload = JSON.stringify({ module, evidenceHtml, evidenceRaw: evidence, storageKey, goal })
     .replaceAll("<", "\\u003c");
   const wordmark = homeHref
@@ -454,41 +454,16 @@ function gutterFor(code) { return code.split("\n").map(function (_, i) { return 
 
 // ---- beats ----
 function missionEnabled() {
-  return state.missionMode && /cli contract/i.test(MODULE.name || "");
+  return state.missionMode && Boolean(missionDef());
+}
+function missionDef() {
+  return MODULE.mission && MODULE.mission.title && MODULE.mission.brief ? MODULE.mission : null;
 }
 function missionMeta(id, fallbackTitle, fallbackCopy) {
   if (!missionEnabled()) return { title: fallbackTitle, copy: fallbackCopy };
-  var map = {
-    spot: {
-      title: "Clear the scraper contract",
-      copy: "Before the archive run starts, find the evidence that defines how this command accepts input and how it must fail."
-    },
-    diagnose: {
-      title: "Clear the scraper contract",
-      copy: "Decide what responsibility this command needs to carry before it can run against a large archive."
-    },
-    inv: {
-      title: "Expose the bad run",
-      copy: "Now remove that contract mentally. Look for the first place a missing or wrong path turns into a confusing run."
-    },
-    break: {
-      title: "Expose the bad run",
-      copy: "Choose the failure that would waste time, hide the real problem, or let automation believe the run succeeded."
-    },
-    crash: {
-      title: "Read the failure report",
-      copy: ""
-    },
-    repair: {
-      title: "Set the release gate",
-      copy: "Repair the command boundary so a long scrape cannot start from bad input or report success when nothing useful happened."
-    },
-    transfer: {
-      title: "Create the release check",
-      copy: "Turn the decision into a short checklist you can reuse before the next command-line tool ships."
-    }
-  };
-  return map[id] || { title: fallbackTitle, copy: fallbackCopy };
+  var mission = missionDef();
+  var beat = mission && mission.beats && mission.beats[id];
+  return beat || { title: fallbackTitle, copy: fallbackCopy };
 }
 function buildBeats() {
   var beats = [];
@@ -541,12 +516,13 @@ function ucard(label, text, html) {
 }
 function missionTone(text) {
   if (!missionEnabled()) return text;
-  return String(text || "")
-    .replace(/\bThe AI added\b/g, "The session introduced")
-    .replace(/\bthe AI added\b/g, "the session introduced")
-    .replace(/\bAI-built\b/g, "new")
-    .replace(/\banother AI\b/g, "another")
-    .replace(/\bbefore it codes\b/g, "before work starts");
+  var out = String(text || "");
+  var replacements = (missionDef() && missionDef().replacements) || [];
+  replacements.forEach(function (pair) {
+    if (!pair || !pair.from) return;
+    out = out.split(pair.from).join(pair.to || "");
+  });
+  return out;
 }
 function evidenceDrawer(stageId, open) {
   var lens = MODULE.lenses[stageId] || MODULE.lenses.diagnose;
@@ -870,18 +846,21 @@ function visibleBeats() {
 }
 
 function missionPanel() {
-  var eligible = /cli contract/i.test(MODULE.name || "");
+  var mission = missionDef();
+  var eligible = Boolean(mission);
   if (!eligible) return "";
   var toggle = '<section class="mission-strip"><div><b>Mission mode</b><span>' +
-    (eligible ? "Run this lab as a production-readiness scenario." : "No mission draft is available for this lab yet.") +
+    "Run this lab with a purpose frame grounded in this session." +
     '</span></div><button type="button" class="mission-toggle' + (state.missionMode ? " on" : "") + '"' +
     (eligible ? "" : " disabled") + ' data-mission-toggle>' + (state.missionMode ? "On" : "Off") + "</button></section>";
   if (!missionEnabled()) return toggle;
   return toggle + '<section class="mission-brief">' +
-    '<div class="eyebrow"><b>Mission brief</b> · Substack archive run</div>' +
-    '<h2>Clear the scraper for the full archive run.</h2>' +
-    '<p>The scraper downloads newsletter images into local markdown. Before a long archive run starts, verify the command fails clearly on bad input, shows usable usage, and exits non-zero so automation can stop instead of producing a false success.</p>' +
-    '<ul><li>Confirm the command contract in the session evidence.</li><li>Expose the failure a weak CLI creates.</li><li>Set a reusable release check for the next command-line tool.</li></ul>' +
+    '<div class="eyebrow"><b>Mission brief</b>' + (mission.context ? " · " + esc(mission.context) : "") + '</div>' +
+    '<h2>' + esc(mission.title) + '</h2>' +
+    '<p>' + esc(mission.brief) + '</p>' +
+    (Array.isArray(mission.steps) && mission.steps.length
+      ? '<ul>' + mission.steps.map(function (step) { return '<li>' + esc(step) + '</li>'; }).join("") + '</ul>'
+      : "") +
     "</section>";
 }
 
@@ -1232,9 +1211,15 @@ function runReview(stageId) {
   }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })
     .then(function (result) {
       if (!result) result = offlineHeuristic(stageId, submission);
+      if (result.overall === "PASS" && result.reviewer !== "claude" && result.reviewer !== "validator") {
+        result = Object.assign({}, result, {
+          overall: "FAIL",
+          summary: (result.summary ? result.summary + " " : "") + "This advisory check cannot complete the lab without a real reviewer."
+        });
+      }
       state.reviewing = null;
       state.reviews[stageId] = result;
-      state.complete[stageId] = result.overall === "PASS";
+      state.complete[stageId] = result.overall === "PASS" && (result.reviewer === "claude" || result.reviewer === "validator");
       state.flash = stageId;
       save(); render();
     });

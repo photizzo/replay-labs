@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
+import { createHash } from "node:crypto";
 
 // Generate a full lab module for a decision we have NO hand-authored module for,
 // from the decision metadata + the session evidence. This is what lets Replay
@@ -276,6 +277,10 @@ export function validateGeneratedModule(module, evidence) {
   if (!hasUsableDiffEvidence(evidence)) {
     blockers.push("evidence does not include concrete changed lines");
   }
+  const grounding = evidenceGrounding(module, evidence);
+  if (grounding.required && grounding.matches < 2) {
+    blockers.push(`generated content is not grounded in evidence-specific terms (${grounding.matches}/2)`);
+  }
 
   // naive code must be real-ish code, not a stub
   const naive = String(module.naiveCode || "");
@@ -332,14 +337,14 @@ export function validateGeneratedModule(module, evidence) {
   const spotInEvidence = (spotDefs || []).some((t) => {
     try { return new RegExp(t.re, "i").test(ev); } catch { return false; }
   });
-  if (!spotInEvidence) warnings.push("spot target not found in evidence — diagnose uses the click-any-line safety net");
+  if (!spotInEvidence) blockers.push("spot target not found in evidence");
   if (!module.repairLab || !module.repairLab.solution) warnings.push("no reference solution — the 'show solution' button is hidden");
 
   return { ok: blockers.length === 0, blockers, warnings };
 }
 
-export async function loadOrGenerate(cacheDir, decision, evidence) {
-  const id = "gen-" + slug(decision.id || decision.title);
+export async function loadOrGenerate(cacheDir, decision, evidence, { timeoutMs = 30000, attempts = 1 } = {}) {
+  const id = "gen-" + slug(decision.id || decision.title) + "-" + evidenceHash(evidence).slice(0, 12);
   const cachePath = resolve(cacheDir, id + ".json");
   if (!hasUsableDiffEvidence(evidence)) {
     console.log(`  generation skipped for "${decision.title}" — evidence does not include concrete changed lines.`);
@@ -352,11 +357,11 @@ export async function loadOrGenerate(cacheDir, decision, evidence) {
     console.log(`  cached generated lab rejected for "${decision.title}": ${check.blockers.join("; ")}`);
   } catch { /* not cached */ }
 
-  // Generate, self-check, and retry once if the result is broken. Never serve a
+  // Generate, self-check, and retry if requested. Never serve a
   // failing lab — fall back to "lab coming" rather than a frustrating one.
   let module = null;
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const gen = await generateModule(decision, evidence);
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const gen = await generateModule(decision, evidence, { timeoutMs });
     if (!gen) continue;
     const candidate = assembleGeneratedModule(decision, gen, evidence);
     const check = validateGeneratedModule(candidate, evidence);
@@ -369,7 +374,7 @@ export async function loadOrGenerate(cacheDir, decision, evidence) {
     console.log(`  generation attempt ${attempt} rejected: ${check.blockers.join("; ")}`);
   }
   if (!module) {
-    console.log(`  generation failed self-check twice for "${decision.title}" — leaving as "lab coming".`);
+    console.log(`  generation failed self-check for "${decision.title}" — leaving as "lab coming".`);
     return null;
   }
 
@@ -379,6 +384,51 @@ export async function loadOrGenerate(cacheDir, decision, evidence) {
 }
 
 function slug(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40); }
+function evidenceHash(value) { return createHash("sha256").update(String(value || "")).digest("hex"); }
+function evidenceGrounding(module, evidence) {
+  const keywords = evidenceKeywords(evidence);
+  if (keywords.length < 2) return { required: false, matches: 0, keywords };
+  const moduleText = JSON.stringify({
+    name: module.name,
+    takeaway: module.takeaway,
+    why: module.why,
+    naive: module.naive,
+    naiveCode: module.naiveCode,
+    breaks: module.breaks,
+    aiVersion: module.aiVersion,
+    production: module.production,
+    challenge: module.challenge,
+    repairLab: module.repairLab,
+    transfer: module.transfer
+  }).toLowerCase();
+  const matches = keywords.filter((keyword) => moduleText.includes(keyword.toLowerCase())).length;
+  return { required: true, matches, keywords };
+}
+
+function evidenceKeywords(evidence) {
+  const stop = new Set([
+    "const", "function", "return", "export", "default", "import", "from", "true", "false",
+    "string", "number", "boolean", "error", "status", "value", "values", "data", "item",
+    "items", "token", "tokens", "validate", "required", "usage", "process", "window"
+  ]);
+  const changedText = String(evidence || "")
+    .split("\n")
+    .filter((line) => /^[+-]/.test(line) && !/^(---|\+\+\+)/.test(line))
+    .map((line) => line.replace(/^[+-]\s*/, ""))
+    .join("\n");
+  const words = changedText.match(/[A-Za-z_][A-Za-z0-9_]{4,}/g) || [];
+  const counts = new Map();
+  for (const word of words) {
+    const key = word.toLowerCase();
+    if (stop.has(key)) continue;
+    if (/^[a-z]$/.test(key)) continue;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)
+    .map(([word]) => word)
+    .slice(0, 8);
+}
 function clampInt(v, lo, hi, dflt) { const n = parseInt(v, 10); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt; }
 function escapeForRe(s) { return String(s || "x").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 export function hasUsableDiffEvidence(evidence) {

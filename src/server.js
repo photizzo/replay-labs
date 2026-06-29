@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { review } from "./review.js";
 import { bestSessionFrom, discoverSessions, generateInboxHtml, loadDiscoveredSession } from "./discovery.js";
 import { buildSessionBundle, bundleSlug } from "./pipeline.js";
@@ -64,16 +65,19 @@ export function startServer({ root = process.cwd(), port = 4177, host = "127.0.0
         if (error) { json(res, 400, { error: error.message }); return; }
         try {
           const sessions = await discoverSessions({ limit: 300, homeDir });
-          const selected = bestSessionFrom(sessions);
+          const selected = bestSessionFrom(sessions, {
+            excludeSessionIds: Array.isArray(body?.excludeSessionIds) ? body.excludeSessionIds : [],
+            excludeSessionPaths: Array.isArray(body?.excludeSessionPaths) ? body.excludeSessionPaths : []
+          });
           if (!selected) throw new Error("No local Claude/Codex sessions found.");
           const result = await buildFromSession({
             base,
             artifactRoot: labsBase,
             sessionPath: selected.path,
-            generate: body?.generate === true || (selected.richLabs === 0 && selected.hasConcreteEvidence),
+            generate: body?.generate === true || selected.state === "can_try_generation",
             title: selected.title
           });
-          json(res, 200, { ...result, title: selected.title, reason: selected.reason, sessionPath: selected.path });
+          json(res, 200, { ...result, title: selected.title, reason: selected.reason, sessionPath: selected.path, sessionId: selected.id });
         } catch (buildError) {
           json(res, 500, { error: buildError.message });
         }
@@ -143,7 +147,7 @@ export function startServer({ root = process.cwd(), port = 4177, host = "127.0.0
 
 async function buildFromSession({ base, artifactRoot, sessionPath, generate, title }) {
   const loaded = await loadDiscoveredSession(sessionPath);
-  const slug = bundleSlug(title || loaded.goal || sessionPath);
+  const slug = `${bundleSlug(title || loaded.goal || sessionPath)}-${shortHash([sessionPath, loaded.diff, loaded.transcript].join("\n"))}`;
   const outDir = resolve(artifactRoot, slug);
   const bundle = await buildSessionBundle({
     goal: loaded.goal,
@@ -156,8 +160,17 @@ async function buildFromSession({ base, artifactRoot, sessionPath, generate, tit
     maxGenerated: 1
   });
   const richCount = bundle.labs.filter((lab) => lab.rich).length;
+  const generatedCount = bundle.labs.filter((lab) => lab.generated && lab.rich).length;
+  const scaffoldCount = bundle.labs.filter((lab) => lab.kind === "scaffold").length;
   const primaryLab = bundle.labs.find((lab) => lab.rich);
-  const hasDecisionSignals = bundle.labs.length > 0;
+  const hasDecisionSignals = bundle.labs.some((lab) => lab.decision.id !== "implementation-shape" || lab.hasConcreteEvidence);
+  const state = richCount > 0
+    ? "ready_lab"
+    : scaffoldCount > 0
+      ? "can_try_generation"
+      : hasDecisionSignals
+        ? "needs_real_diff"
+        : "no_decision_evidence";
   const href = "/replay-built/" + normalize(bundle.indexPath.slice(artifactRoot.length)).replace(/^[/\\]/, "").replaceAll("\\", "/");
   const baseHref = href.replace(/\/index\.html$/, "");
   return {
@@ -167,15 +180,25 @@ async function buildFromSession({ base, artifactRoot, sessionPath, generate, tit
     primaryLabHref: primaryLab ? `${baseHref}/labs/${primaryLab.module.id}.html` : null,
     labs: bundle.labs.length,
     richLabs: richCount,
-    generated: Boolean(generate),
+    readyLabs: richCount,
+    generatedLabs: generatedCount,
+    generationAttempted: Boolean(generate),
+    generated: generatedCount > 0,
+    state,
     noReadyLabs: richCount === 0,
     noDecisionSignals: !hasDecisionSignals,
     message: richCount > 0
-      ? "Lab ready."
-      : hasDecisionSignals
-        ? "Replay Labs found decision signals, but not enough concrete code evidence to build a practice lab."
-        : "Replay could not find enough decision evidence in this session."
+      ? "Open the lab and start with the strongest grounded decision."
+      : scaffoldCount > 0
+        ? "Replay found changed-line evidence, but generation did not produce a ready lab yet. The session map is available for inspection."
+        : hasDecisionSignals
+          ? "Replay found decision signals, but no matching changed-line evidence for a practice lab."
+          : "Replay could not find enough decision evidence in this session."
   };
+}
+
+function shortHash(value) {
+  return createHash("sha256").update(String(value || "")).digest("hex").slice(0, 10);
 }
 
 function readJson(req, callback) {

@@ -6,7 +6,7 @@ export function generateOverviewHtml({ goal, labs }) {
   const primary = rich[0] || labs[0];
   const cards = labs.map((lab, index) => labCard(lab, index)).join("");
   const hasReadyLabs = rich.length > 0;
-  const hasDecisionSignals = labs.length > 0;
+  const hasDecisionSignals = labs.some((lab) => lab.decision.id !== "implementation-shape" || lab.hasConcreteEvidence);
   const decisionWord = labs.length === 1 ? "decision" : "decisions";
   const decisionNoun = labs.length === 1 ? "decision signal" : "decision signals";
   const headline = hasReadyLabs

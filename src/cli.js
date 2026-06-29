@@ -52,6 +52,9 @@ The shorter replay command is also installed as an alias.
 
 function parseArgs(argv) {
   let [command, ...rest] = argv;
+  if (command === "--help" || command === "-h") {
+    return { command: "help" };
+  }
   if (command && command.startsWith("--")) {
     rest = argv;
     command = "app";
@@ -188,12 +191,13 @@ async function main() {
     const outDir = resolve(args["out-dir"] || "./replay-inbox");
     await writeSessionInbox({ sessions, outDir });
     console.log(`Replay Labs found ${sessions.length} local AI sessions.`);
-    const ready = sessions.filter((s) => s.richLabs > 0).length;
-    const canGenerate = sessions.filter((s) => s.richLabs === 0 && s.hasConcreteEvidence).length;
-    const mapOnly = sessions.filter((s) => s.richLabs === 0 && !s.hasConcreteEvidence).length;
+    const ready = sessions.filter((s) => s.state === "ready_lab").length;
+    const canGenerate = sessions.filter((s) => s.state === "can_try_generation").length;
+    const needsDiff = sessions.filter((s) => s.state === "needs_real_diff").length;
+    const noEvidence = sessions.filter((s) => s.state === "no_decision_evidence").length;
     const strong = sessions.filter((s) => s.labPotential === "strong").length;
     const medium = sessions.filter((s) => s.labPotential === "medium").length;
-    console.log(`${ready} ready labs, ${canGenerate} sessions with diff evidence, ${mapOnly} decision-map-only sessions.`);
+    console.log(`${ready} ready labs, ${canGenerate} sessions can try generation, ${needsDiff} need real diff, ${noEvidence} have no decision evidence.`);
     console.log(`${strong} sessions with enough evidence, ${medium} medium signal sessions.`);
     console.log(`Inbox: ${resolve(outDir, "index.html")}`);
     const best = bestSessionFrom(sessions);

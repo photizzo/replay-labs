@@ -48,7 +48,7 @@ export async function loadDiscoveredSession(sessionPath) {
 
 export async function chooseBestSession(options = {}) {
   const sessions = await discoverSessions(options);
-  return bestSessionFrom(sessions);
+  return bestSessionFrom(sessions, options);
 }
 
 export async function writeSessionInbox({ sessions, outDir }) {
@@ -59,14 +59,16 @@ export async function writeSessionInbox({ sessions, outDir }) {
   return destination;
 }
 
-export function bestSessionFrom(sessions, { preferReady = true } = {}) {
-  const candidates = sessions.filter((s) =>
-    s.labPotential !== "weak" && (s.richLabs > 0 || s.hasConcreteEvidence)
+export function bestSessionFrom(sessions, { preferReady = true, excludeSessionIds = [], excludeSessionPaths = [] } = {}) {
+  const excludedIds = new Set(excludeSessionIds);
+  const excludedPaths = new Set(excludeSessionPaths);
+  const available = sessions.filter((s) => !excludedIds.has(s.id) && !excludedPaths.has(s.path));
+  const candidates = available.filter((s) =>
+    s.state === "ready_lab" || s.state === "can_try_generation"
   );
   const ranked = (candidates.length ? candidates : sessions).slice()
     .sort((a, b) =>
-      (preferReady ? Number(b.richLabs > 0) - Number(a.richLabs > 0) : 0) ||
-      Number(b.hasConcreteEvidence) - Number(a.hasConcreteEvidence) ||
+      (preferReady ? stateRank(b.state) - stateRank(a.state) : 0) ||
       (b.score - a.score) ||
       (b.mtimeMs - a.mtimeMs)
     );
@@ -74,8 +76,7 @@ export function bestSessionFrom(sessions, { preferReady = true } = {}) {
 }
 
 function compareSessionUsefulness(a, b) {
-  return Number(b.richLabs > 0) - Number(a.richLabs > 0) ||
-    Number(b.hasConcreteEvidence) - Number(a.hasConcreteEvidence) ||
+  return stateRank(b.state) - stateRank(a.state) ||
     (b.score - a.score) ||
     (b.mtimeMs - a.mtimeMs);
 }
@@ -99,10 +100,9 @@ async function inspectSessionFile(file, tool, homeDir) {
     transcriptPath: file
   });
   const hasConcreteEvidence = hasUsableDiffEvidence(ingested.diff);
-  const richLabs = analysis.decisions.filter((decision) =>
-    hasUsableDiffEvidence(findEvidenceSnippet(ingested.diff, decision.patterns))
-  ).length;
-  const score = scoreSession({ ingested, analysis, size: info.size, tool, richLabs, hasConcreteEvidence });
+  const readiness = classifySessionReadiness(analysis.decisions, ingested.diff);
+  const richLabs = readiness.readyLabs;
+  const score = scoreSession({ ingested, analysis, size: info.size, tool, readiness, hasConcreteEvidence });
   const project = projectNameFor(file, homeDir, tool, ingested);
 
   return {
@@ -120,11 +120,15 @@ async function inspectSessionFile(file, tool, homeDir) {
     decisions: analysis.decisions.map((d) => ({ id: d.id, title: d.title })).slice(0, 5),
     risks: analysis.risks.slice(0, 4),
     richLabs,
+    readyLabs: readiness.readyLabs,
+    generatableDecisions: readiness.generatableDecisions,
+    decisionSignals: readiness.decisionSignals,
     hasConcreteEvidence,
+    state: readiness.state,
     score: score.score,
     labPotential: score.potential,
     reason: score.reason,
-    command: `node ./src/cli.js lab --session ${shellQuote(file)} --out-dir ./reports-${safeSlug(project)}${richLabs ? "" : " --generate"}`
+    command: `node ./src/cli.js lab --session ${shellQuote(file)} --out-dir ./reports-${safeSlug(project)}${readiness.state === "can_try_generation" ? " --generate" : ""}`
   };
 }
 
@@ -250,7 +254,47 @@ async function findJsonlFiles(root, maxFiles) {
   return found;
 }
 
-function scoreSession({ ingested, analysis, size, tool, richLabs, hasConcreteEvidence }) {
+function classifySessionReadiness(decisions, diff) {
+  let readyLabs = 0;
+  let generatableDecisions = 0;
+  let evidenceBackedDecisions = 0;
+  const hasSpecificDecisionSignals = decisions.some((decision) => decision.id !== "implementation-shape");
+
+  for (const decision of decisions) {
+    const evidence = findEvidenceSnippet(diff, decision.patterns);
+    if (!hasUsableDiffEvidence(evidence)) continue;
+    evidenceBackedDecisions += 1;
+    if (MODULES[decision.id]) readyLabs += 1;
+    else generatableDecisions += 1;
+  }
+
+  const state = readyLabs > 0
+    ? "ready_lab"
+    : generatableDecisions > 0
+      ? "can_try_generation"
+      : hasSpecificDecisionSignals
+        ? "needs_real_diff"
+        : "no_decision_evidence";
+
+  return {
+    state,
+    readyLabs,
+    generatableDecisions,
+    evidenceBackedDecisions,
+    decisionSignals: hasSpecificDecisionSignals ? decisions.length : 0
+  };
+}
+
+function stateRank(state) {
+  return {
+    ready_lab: 4,
+    can_try_generation: 3,
+    needs_real_diff: 2,
+    no_decision_evidence: 1
+  }[state] || 0;
+}
+
+function scoreSession({ ingested, analysis, size, tool, readiness, hasConcreteEvidence }) {
   let score = 0;
   const reasons = [];
   if (ingested.stats.turns >= 4) { score += 2; reasons.push("has enough human/assistant context"); }
@@ -261,16 +305,18 @@ function scoreSession({ ingested, analysis, size, tool, richLabs, hasConcreteEvi
     score += 1;
     reasons.push("has file references, but no concrete diff");
   }
-  if (analysis.decisions.length >= 1) { score += 3; reasons.push("contains detectable decisions"); }
-  if (richLabs > 0) {
-    const seedLabs = analysis.decisions.filter((decision) =>
-      MODULES[decision.id] &&
-      hasUsableDiffEvidence(findEvidenceSnippet(ingested.diff, decision.patterns))
-    ).length;
+  if (readiness.decisionSignals > 0 || readiness.evidenceBackedDecisions > 0) {
+    score += 3;
+    reasons.push("contains detectable decisions");
+  }
+  if (readiness.readyLabs > 0) {
     score += 5;
-    reasons.push(seedLabs
-      ? `${richLabs} evidence-backed lab${richLabs === 1 ? " is" : "s are"} available (${seedLabs} seed pattern${seedLabs === 1 ? "" : "s"})`
-      : `${richLabs} evidence-backed lab${richLabs === 1 ? " is" : "s are"} available`);
+    reasons.push(`${readiness.readyLabs} ready lab${readiness.readyLabs === 1 ? " is" : "s are"} available`);
+  } else if (readiness.generatableDecisions > 0) {
+    score += 3;
+    reasons.push(`${readiness.generatableDecisions} decision${readiness.generatableDecisions === 1 ? "" : "s"} have changed-line evidence; generation can be tried`);
+  } else if (readiness.state === "needs_real_diff") {
+    reasons.push("has decision signals, but no matching changed-line evidence");
   }
   if (analysis.risks.length >= 2) { score += 1; reasons.push("has concrete risks to teach"); }
   if (/test|error|fail|fix|review|build|deploy|permission|validate|secret|api|design|prd|product/i.test(ingested.transcript)) {
@@ -280,7 +326,7 @@ function scoreSession({ ingested, analysis, size, tool, richLabs, hasConcreteEvi
   if (tool === "claude" && ingested.stats.edits > 0) score += 1;
   if (size > MAX_SESSION_BYTES / 2) score -= 1;
 
-  const potential = !hasConcreteEvidence && richLabs === 0
+  const potential = readiness.state === "no_decision_evidence"
     ? "weak"
     : score >= 10 ? "strong" : score >= 5 ? "medium" : "weak";
 
@@ -296,9 +342,10 @@ export function generateInboxHtml(sessions, { interactive = false } = {}) {
   const best = bestSessionFrom(sessions);
   const counts = countByTool(sessions);
   const projectCount = new Set(sessions.map((session) => session.project)).size;
-  const readyCount = sessions.filter((s) => s.richLabs > 0).length;
-  const generateCount = sessions.filter((s) => !s.richLabs && s.hasConcreteEvidence).length;
-  const mapOnlyCount = sessions.filter((s) => !s.richLabs && !s.hasConcreteEvidence).length;
+  const readyCount = sessions.filter((s) => s.state === "ready_lab").length;
+  const generateCount = sessions.filter((s) => s.state === "can_try_generation").length;
+  const needsDiffCount = sessions.filter((s) => s.state === "needs_real_diff").length;
+  const noDecisionCount = sessions.filter((s) => s.state === "no_decision_evidence").length;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -387,7 +434,7 @@ code{color:#c7d2fe}
 <div class="top"><div><div class="eyebrow">Replay Labs session inbox</div><h1>Replay Labs found ${sessions.length} local AI sessions.</h1>
 <p>Choose a project, then turn one recovered session into a mission: understand the decision, practice the tradeoff, and leave with something reusable. No upload required.</p></div>
 ${best ? interactive
-  ? `<div class="actions"><button class="primary" data-choose>${best.richLabs ? "Start suggested ready lab" : "Show suggested decision map"}</button><button class="secondary" data-refresh>Refresh sessions</button></div>`
+  ? `<div class="actions"><button class="primary" data-choose>${best.state === "ready_lab" ? "Start suggested ready lab" : "Let Replay choose"}</button><button class="secondary" data-refresh>Refresh sessions</button></div>`
   : `<div class="pick">Let Replay choose:<br><code>${escapeHtml(best.command)}</code></div>`
   : interactive ? `<div class="actions"><button class="secondary" data-refresh>Refresh sessions</button></div>` : ""}
 </div>
@@ -406,7 +453,8 @@ ${best ? interactive
     <div class="summary">
       <span class="tag ready">${readyCount} ready</span>
       <span class="tag signal">${generateCount} can generate</span>
-      <span class="tag limited">${mapOnlyCount} map only</span>
+      <span class="tag limited">${needsDiffCount} need real diff</span>
+      <span class="tag">${noDecisionCount} no decision evidence</span>
       <span class="tag">${projectCount} projects</span>
       <span class="tag">${counts.claude || 0} Claude</span>
       <span class="tag">${counts.codex || 0} Codex</span>
@@ -416,12 +464,12 @@ ${best ? interactive
       <button class="filter-btn on" data-filter="all">All sessions <span>${sessions.length}</span></button>
       <button class="filter-btn" data-filter="ready">Ready labs <span>${readyCount}</span></button>
       <button class="filter-btn" data-filter="generate">Can generate <span>${generateCount}</span></button>
-      <button class="filter-btn" data-filter="map">Decision maps <span>${mapOnlyCount}</span></button>
+      <button class="filter-btn" data-filter="map">Needs evidence <span>${needsDiffCount + noDecisionCount}</span></button>
       <button class="filter-btn" data-filter="codex">Codex <span>${counts.codex || 0}</span></button>
       <button class="filter-btn" data-filter="claude">Claude <span>${counts.claude || 0}</span></button>
     </div>
     <div class="summary-actions"><button class="compact" data-expand-all>Expand all</button><button class="compact" data-collapse-all>Collapse scanned</button></div>
-    <p>Mission mode is the target experience for labs: decision first, evidence second, transferable ownership last.</p>
+    <p>Mission framing appears only on labs with grounded copy. When Replay lacks enough evidence, it says so instead of inventing a lab.</p>
   </aside>
   <section>
     <p class="active-filter" data-filter-label>Showing all sessions across ${projectCount} projects.</p>
@@ -440,13 +488,13 @@ function groupedSessionCards(sessions) {
   }
   return [...groups.entries()].map(([project, projectSessions], index) => {
     const counts = countByTool(projectSessions);
-    const ready = projectSessions.filter((session) => session.richLabs > 0).length;
-    const canGenerate = projectSessions.filter((session) => !session.richLabs && session.hasConcreteEvidence).length;
+    const ready = projectSessions.filter((session) => session.state === "ready_lab").length;
+    const canGenerate = projectSessions.filter((session) => session.state === "can_try_generation").length;
     const open = index < 2 || ready > 0 || counts.codex > 0;
     const meta = [
       `${projectSessions.length} session${projectSessions.length === 1 ? "" : "s"}`,
       `${ready} ready`,
-      `${canGenerate} can generate`,
+      `${canGenerate} can try generation`,
       `${counts.claude || 0} Claude`,
       `${counts.codex || 0} Codex`
     ].join(" · ");
@@ -475,22 +523,23 @@ function emptyState() {
 function sessionCard(session) {
   const decisionTags = session.decisions.slice(0, 3)
     .map((d) => `<span class="tag">${escapeHtml(d.title)}</span>`).join("");
-  const stateTag = session.richLabs
-    ? `<span class="tag ready">${session.richLabs} ready lab${session.richLabs === 1 ? "" : "s"}</span>`
-    : session.hasConcreteEvidence
-      ? `<span class="tag signal">has changed lines · can try generation</span>`
-      : `<span class="tag limited">decision signals · needs changed lines</span>`;
-  const action = session.richLabs
+  const stateTag = session.state === "ready_lab"
+    ? `<span class="tag ready">${session.readyLabs} ready lab${session.readyLabs === 1 ? "" : "s"}</span>`
+    : session.state === "can_try_generation"
+      ? `<span class="tag signal">${session.generatableDecisions} decision${session.generatableDecisions === 1 ? "" : "s"} can try generation</span>`
+      : session.state === "needs_real_diff"
+        ? `<span class="tag limited">needs real changed lines</span>`
+        : `<span class="tag limited">no decision evidence yet</span>`;
+  const action = session.state === "ready_lab"
     ? `<button class="primary" data-build>Build lab</button>`
-    : session.hasConcreteEvidence
+    : session.state === "can_try_generation"
       ? `<button class="secondary" data-build data-generate="true">Generate lab</button>`
-      : `<button class="secondary" data-build data-map-only="true">Build decision map</button>`;
-  const state = session.richLabs ? "ready" : session.hasConcreteEvidence ? "generate" : "map";
-  return `<article class="card" data-session-path="${escapeHtml(session.path)}" data-tool="${escapeHtml(session.tool)}" data-state="${state}">
+      : `<button class="secondary" data-build data-map-only="true">Inspect session</button>`;
+  return `<article class="card" data-session-path="${escapeHtml(session.path)}" data-tool="${escapeHtml(session.tool)}" data-state="${escapeHtml(session.state)}">
   <div class="meta">${escapeHtml(session.tool)}<br>${escapeHtml(new Date(session.modified).toLocaleString())}</div>
   <div>
     <h2>${escapeHtml(session.title)}</h2>
-    <p>${escapeHtml(session.project)} · ${session.stats.turns} turns · ${session.stats.edits} ${escapeHtml(session.fileSignalLabel)} · ${session.richLabs} ready labs</p>
+    <p>${escapeHtml(session.project)} · ${session.stats.turns} turns · ${session.stats.edits} ${escapeHtml(session.fileSignalLabel)} · ${stateLabel(session.state)}</p>
     <div class="tags">${stateTag}${decisionTags}</div>
     <p style="margin-top:9px">${escapeHtml(session.reason)}</p>
   </div>
@@ -499,14 +548,23 @@ function sessionCard(session) {
 </article>`;
 }
 
+function stateLabel(state) {
+  return {
+    ready_lab: "ready lab",
+    can_try_generation: "can try generation",
+    needs_real_diff: "needs real diff",
+    no_decision_evidence: "no decision evidence"
+  }[state] || "unclassified";
+}
+
 function inboxScript() {
   return `<script>
 const statusBox = document.getElementById("status");
 let currentFilter = "all";
 function resultHtml(data, heading) {
-  const ready = !data.noDecisionSignals && !data.noReadyLabs;
-  const title = heading || (ready ? "Lab ready." : data.noDecisionSignals ? "No decision map yet." : "Decision map ready.");
-  const body = data.message || (ready ? "Open the lab and start with the strongest decision." : "Open the session map for what Replay could recover.");
+  const ready = data.state === "ready_lab" || (data.richLabs || 0) > 0;
+  const title = heading || (ready ? "Lab ready." : data.state === "can_try_generation" ? "No ready lab yet." : data.state === "needs_real_diff" ? "Needs real changed-line evidence." : "No decision evidence yet.");
+  const body = data.message || (ready ? "Open the lab and start with the strongest decision." : "Open the session map to inspect what Replay could recover.");
   const primary = ready && data.primaryLabHref
     ? '<a class="primary" href="' + data.primaryLabHref + '">Start lab</a>'
     : "";
@@ -527,7 +585,9 @@ function statusForSession(sessionPath) {
 }
 function cardMatchesFilter(card, filter) {
   if (filter === "all") return true;
-  if (filter === "ready" || filter === "generate" || filter === "map") return card.dataset.state === filter;
+  if (filter === "ready") return card.dataset.state === "ready_lab";
+  if (filter === "generate") return card.dataset.state === "can_try_generation";
+  if (filter === "map") return card.dataset.state === "needs_real_diff" || card.dataset.state === "no_decision_evidence";
   if (filter === "codex" || filter === "claude") return card.dataset.tool === filter;
   return true;
 }
@@ -558,12 +618,12 @@ function applyFilter(filter) {
   });
   const label = document.querySelector("[data-filter-label]");
   if (label) {
-    const names = { all: "all sessions", ready: "ready labs", generate: "sessions that can generate", map: "decision maps", codex: "Codex sessions", claude: "Claude sessions" };
+    const names = { all: "all sessions", ready: "ready labs", generate: "sessions that can try generation", map: "sessions needing evidence", codex: "Codex sessions", claude: "Claude sessions" };
     label.textContent = "Showing " + (names[filter] || "sessions") + " across " + visibleProjects + " project" + (visibleProjects === 1 ? "" : "s") + " (" + visibleCards + " sessions).";
   }
 }
 async function buildLab(sessionPath, generate, statusTarget, mapOnly) {
-  showStatus(mapOnly ? "Building decision map..." : (generate ? "Generating from changed-line evidence..." : "Building lab locally..."), statusTarget);
+  showStatus(mapOnly ? "Inspecting recovered signals..." : (generate ? "Trying generation from changed-line evidence..." : "Building lab locally..."), statusTarget);
   const res = await fetch("/api/build-lab", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -598,10 +658,19 @@ document.addEventListener("click", async (event) => {
       choose.disabled = true;
       try {
         showStatus("Replay is choosing a local session with enough evidence...");
-        const res = await fetch("/api/choose-lab", { method: "POST" });
+        const chosen = JSON.parse(sessionStorage.getItem("replayRecentChoices") || "[]");
+        const res = await fetch("/api/choose-lab", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ excludeSessionIds: chosen.slice(-10) })
+        });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Choose failed");
-        const prefix = data.noDecisionSignals ? "No decision map is ready yet." : data.noReadyLabs ? "Suggested decision map." : "Suggested ready lab.";
+        if (data.sessionId) {
+          chosen.push(data.sessionId);
+          sessionStorage.setItem("replayRecentChoices", JSON.stringify(Array.from(new Set(chosen)).slice(-20)));
+        }
+        const prefix = data.state === "ready_lab" ? "Suggested ready lab." : data.state === "can_try_generation" ? "Suggested generation candidate." : "Suggested session to inspect.";
         const target = statusForSession(data.sessionPath) || statusBox;
         showStatus(resultHtml(data, prefix), target);
         if (target !== statusBox) statusBox.style.display = "none";
